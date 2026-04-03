@@ -64,7 +64,7 @@ class DistanceEstimator:
                 params={
                     "q": f"{address}, Czechia",
                     "format": "jsonv2",
-                    "limit": 1,
+                    "limit": "1",
                     "countrycodes": "cz",
                 },
                 timeout=10,

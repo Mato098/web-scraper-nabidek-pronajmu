@@ -1,6 +1,6 @@
 #!/usr/bin/evn python3
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from time import time
 
 import discord
@@ -12,7 +12,6 @@ from discord_logger import DiscordLogger
 from offers_storage import OffersStorage
 from scrapers.rental_offer import RentalOffer
 from scrapers_manager import create_scrapers, fetch_latest_offers
-from datetime import datetime
 import asyncio
 
 def get_current_daytime() -> bool: return datetime.now().hour in range(6, 22)
@@ -27,7 +26,7 @@ landmark_estimators = {
     "Vzdialenosť k FI MU": DistanceEstimator(origin_lat=49.2098333, origin_lon=16.599),
     "Vzdialenosť k FIT VUT": DistanceEstimator(origin_lat=49.2262778, origin_lon=16.5962778),
     "Vzdialenosť k Náměstí svobody": DistanceEstimator(origin_lat=49.1951389, origin_lon=16.6080278),
-    "Vzdialenosť k Cejlu": DistanceEstimator(origin_lat=49.1985278, origin_lon=16.6207778),
+    "Vzdialenosť od Cejlu 💀": DistanceEstimator(origin_lat=49.1985278, origin_lon=16.6207778),
 }
 
 
@@ -95,7 +94,7 @@ async def process_latest_offers():
                     title=offer.title,
                     url=offer.link,
                     description=offer.location,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     color=offer.scraper.color
                 )
                 embed.add_field(name="Cena", value=str(offer.price) + " Kč")
