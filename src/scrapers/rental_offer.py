@@ -20,5 +20,11 @@ class RentalOffer:
     image_url: str
     """Náhledový obrázek nabídky"""
 
-    scraper: 'ScraperBase'
+    scraper: object
     """Odkaz na instanci srapera, ze kterého tato nabídka pochází"""
+
+    latitude: float | None = None
+    """Zeměpisná šířka nabídky, pokud je dostupná"""
+
+    longitude: float | None = None
+    """Zeměpisná délka nabídky, pokud je dostupná"""

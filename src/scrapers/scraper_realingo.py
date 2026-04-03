@@ -105,7 +105,9 @@ class ScraperRealingo(ScraperBase):
                 title = self.category_to_string(offer["category"]) + ", " + str(offer["area"]["main"]) + " m²",
                 location = offer["location"]["address"],
                 price = offer["price"]["total"],
-                image_url = urljoin(self.base_url, "/static/images/" + (offer["photos"]["main"] or ""))
+                image_url = urljoin(self.base_url, "/static/images/" + (offer["photos"]["main"] or "")),
+                latitude = offer["location"].get("latitude"),
+                longitude = offer["location"].get("longitude")
             ))
 
         return items

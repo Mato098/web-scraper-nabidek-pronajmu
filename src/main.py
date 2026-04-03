@@ -7,6 +7,7 @@ import discord
 from discord.ext import tasks
 
 from config import *
+from distance_estimator import DistanceEstimator
 from discord_logger import DiscordLogger
 from offers_storage import OffersStorage
 from scrapers.rental_offer import RentalOffer
@@ -22,6 +23,27 @@ daytime = get_current_daytime()
 interval_time = config.refresh_interval_daytime_minutes if daytime else config.refresh_interval_nighttime_minutes
 
 scrapers = create_scrapers(config.dispositions)
+landmark_estimators = {
+    "Vzdialenosť k FI MU": DistanceEstimator(origin_lat=49.2098333, origin_lon=16.599),
+    "Vzdialenosť k FIT VUT": DistanceEstimator(origin_lat=49.2262778, origin_lon=16.5962778),
+    "Vzdialenosť k Náměstí svobody": DistanceEstimator(origin_lat=49.1951389, origin_lon=16.6080278),
+    "Vzdialenosť k Cejlu": DistanceEstimator(origin_lat=49.1985278, origin_lon=16.6207778),
+}
+
+
+def format_distance(distance_meters: int) -> str:
+    if distance_meters < 1000:
+        return f"{distance_meters} m"
+    return f"{distance_meters / 1000:.1f} km"
+
+
+async def estimate_landmark_distances(offer: RentalOffer) -> dict[str, int | None]:
+    tasks = [
+        asyncio.to_thread(estimator.estimate_distance_meters, offer)
+        for estimator in landmark_estimators.values()
+    ]
+    values = await asyncio.gather(*tasks)
+    return dict(zip(landmark_estimators.keys(), values))
 
 @client.event
 async def on_ready():
@@ -48,7 +70,8 @@ async def process_latest_offers():
     logging.info("Fetching offers")
 
     new_offers: list[RentalOffer] = []
-    for offer in fetch_latest_offers(scrapers):
+    latest_offers = await asyncio.to_thread(fetch_latest_offers, scrapers)
+    for offer in latest_offers:
         if not storage.contains(offer):
             new_offers.append(offer)
 
@@ -66,6 +89,8 @@ async def process_latest_offers():
             embeds = []
 
             for offer in offer_batch:
+                landmark_distances = await estimate_landmark_distances(offer)
+
                 embed = discord.Embed(
                     title=offer.title,
                     url=offer.link,
@@ -74,6 +99,11 @@ async def process_latest_offers():
                     color=offer.scraper.color
                 )
                 embed.add_field(name="Cena", value=str(offer.price) + " Kč")
+                for label, distance_meters in landmark_distances.items():
+                    embed.add_field(
+                        name=label,
+                        value=(format_distance(distance_meters) if distance_meters is not None else "Nedostupné")
+                    )
                 embed.set_author(name=offer.scraper.name, icon_url=offer.scraper.logo_url)
                 embed.set_image(url=offer.image_url)
 
