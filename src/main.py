@@ -1,7 +1,10 @@
 #!/usr/bin/evn python3
+import json
 import logging
 from datetime import datetime, timezone
 from time import time
+from pathlib import Path
+import unicodedata
 
 import discord
 from discord.ext import tasks
@@ -28,6 +31,20 @@ landmark_estimators = {
     "Vzdialenosť k Náměstí svobody": DistanceEstimator(origin_lat=49.1951389, origin_lon=16.6080278),
     "Vzdialenosť od Cejlu 💀": DistanceEstimator(origin_lat=49.1985278, origin_lon=16.6207778),
 }
+
+bad_streets_file = Path(__file__).resolve().parent / "data" / "bad_streets.json"
+with bad_streets_file.open(encoding="utf-8") as file:
+    bad_streets = json.load(file)
+
+
+def normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(character for character in normalized if not unicodedata.combining(character)).casefold()
+
+
+def get_bad_streets(offer: RentalOffer) -> list[str]:
+    normalized_location = normalize_text(offer.location)
+    return [street for street in bad_streets if normalize_text(street) in normalized_location]
 
 
 def format_distance(distance_meters: int) -> str:
@@ -103,6 +120,9 @@ async def process_latest_offers():
                         name=label,
                         value=(format_distance(distance_meters) if distance_meters is not None else "Nedostupné")
                     )
+                bad_streets_for_offer = get_bad_streets(offer)
+                if bad_streets_for_offer:
+                    embed.add_field(name="⚠️ Zlá ulica", value=", ".join(bad_streets_for_offer), inline=False)
                 embed.set_author(name=offer.scraper.name, icon_url=offer.scraper.logo_url)
                 embed.set_image(url=offer.image_url)
 
