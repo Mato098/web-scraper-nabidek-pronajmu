@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from time import time
 from pathlib import Path
 import unicodedata
+from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import tasks
@@ -17,7 +18,10 @@ from scrapers.rental_offer import RentalOffer
 from scrapers_manager import create_scrapers, fetch_latest_offers
 import asyncio
 
-def get_current_daytime() -> bool: return datetime.now().hour in range(6, 22)
+def get_current_daytime() -> bool: 
+    brno_time = datetime.now(ZoneInfo("Europe/Prague"))
+    
+    return brno_time.hour in range(6, 22)
 
 
 client = discord.Client(intents=discord.Intents.default())
