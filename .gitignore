@@ -2,3 +2,5 @@
 remembered_offers.txt
 found_offers.txt
 .env.local
+.env
+.env.docker
