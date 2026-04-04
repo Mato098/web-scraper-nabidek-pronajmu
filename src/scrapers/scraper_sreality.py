@@ -99,11 +99,17 @@ class ScraperSreality(ScraperBase):
 
 
     def _create_link_to_offer(self, offer) -> str:
+        # remove double/leading/trailing dashes (sreality vracia malformed locality)
+        locality = offer["seo"]["locality"]
+        locality = locality.strip('-')
+        while '--' in locality:
+            locality = locality.replace('--', '-')
+        
         return urljoin(self.base_url, "/detail" +
             "/" + self._category_type_to_url[offer["seo"]["category_type_cb"]] +
             "/" + self._category_main_to_url[offer["seo"]["category_main_cb"]] +
             "/" + self._category_sub_to_url[offer["seo"]["category_sub_cb"]] +
-            "/" + offer["seo"]["locality"] +
+            "/" + locality +
             "/" + str(offer["hash_id"]))
 
     def build_response(self) -> requests.Response:
