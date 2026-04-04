@@ -99,7 +99,6 @@ class ScraperSreality(ScraperBase):
 
 
     def _create_link_to_offer(self, offer) -> str:
-        # remove double/leading/trailing dashes (sreality vracia malformed locality)
         locality = offer["seo"]["locality"]
         locality = locality.strip('-')
         while '--' in locality:
