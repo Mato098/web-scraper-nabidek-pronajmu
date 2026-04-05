@@ -31,7 +31,6 @@ interval_time = config.refresh_interval_daytime_minutes if daytime else config.r
 scrapers = create_scrapers(config.dispositions)
 landmark_estimators = {
     "Vzdialenosť k FI MU": DistanceEstimator(origin_lat=49.2098333, origin_lon=16.599),
-    "Vzdialenosť k FIT VUT": DistanceEstimator(origin_lat=49.2262778, origin_lon=16.5962778),
     "Vzdialenosť k Náměstí svobody": DistanceEstimator(origin_lat=49.1951389, origin_lon=16.6080278),
     "Vzdialenosť od Cejlu 💀": DistanceEstimator(origin_lat=49.1985278, origin_lon=16.6207778),
 }
@@ -56,6 +55,13 @@ def format_distance(distance_meters: int) -> str:
         return f"{distance_meters} m"
     return f"{distance_meters / 1000:.1f} km"
 
+def get_price_per_sqm(title: str, price: int) -> int | None:
+    split = title.split(" ")
+    if "m²" in split:
+        size = split[split.index("m²") - 1]
+        if size.isdecimal():
+            return int(price / int(size))
+    return None
 
 async def estimate_landmark_distances(offer: RentalOffer) -> dict[str, int | None]:
     tasks = [
@@ -119,6 +125,8 @@ async def process_latest_offers():
                     color=offer.scraper.color
                 )
                 embed.add_field(name="Cena", value=str(offer.price) + " Kč")
+                price_per_sqm = get_price_per_sqm(offer.title, int(offer.price))
+                embed.add_field(name="Cena/m²", value=(str(price_per_sqm) + " Kč/m²" if price_per_sqm is not None else "Nedostupné"))
                 for label, distance_meters in landmark_distances.items():
                     embed.add_field(
                         name=label,
