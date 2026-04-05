@@ -1,7 +1,7 @@
 #!/usr/bin/evn python3
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import time
 from pathlib import Path
 import unicodedata
@@ -18,13 +18,17 @@ from scrapers.rental_offer import RentalOffer
 from scrapers_manager import create_scrapers, fetch_latest_offers
 import asyncio
 
+def get_current_time() -> datetime:
+    return datetime.now(ZoneInfo("Europe/Prague"))
+
 def get_current_daytime() -> bool: 
-    brno_time = datetime.now(ZoneInfo("Europe/Prague"))
+    brno_time = get_current_time()
     
     return brno_time.hour in range(6, 22)
 
 
 client = discord.Client(intents=discord.Intents.default())
+
 daytime = get_current_daytime()
 interval_time = config.refresh_interval_daytime_minutes if daytime else config.refresh_interval_nighttime_minutes
 
@@ -39,11 +43,23 @@ bad_streets_file = Path(__file__).resolve().parent / "data" / "bad_streets.json"
 with bad_streets_file.open(encoding="utf-8") as file:
     bad_streets = json.load(file)
 
+async def set_activity(message: str):
+    custom_activity = discord.CustomActivity(name=message)
+    await client.change_presence(activity=custom_activity)
 
 def normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(character for character in normalized if not unicodedata.combining(character)).casefold()
 
+def sanitize_price(price: int | str) -> int:
+    if isinstance(price, int):
+        return price
+    if isinstance(price, str) and price.strip().isdecimal():
+        return int(price.strip())
+    if isinstance(price, str) and "/" in price:
+        parts = price.split("/")
+        return sum(sanitize_price(part) for part in parts)
+    return 0
 
 def get_bad_streets(offer: RentalOffer) -> list[str]:
     normalized_location = normalize_text(offer.location)
@@ -56,7 +72,10 @@ def format_distance(distance_meters: int) -> str:
     return f"{distance_meters / 1000:.1f} km"
 
 def get_price_per_sqm(title: str, price: int) -> int | None:
+    logging.info(title)
+    title = title.replace("\xa0", " ")  # nezlomitelny mezernik
     split = title.split(" ")
+    logging.info(split)
     if "m²" in split:
         size = split[split.index("m²") - 1]
         if size.isdecimal():
@@ -125,8 +144,8 @@ async def process_latest_offers():
                     color=offer.scraper.color
                 )
                 embed.add_field(name="Cena", value=str(offer.price) + " Kč")
-                price_per_sqm = get_price_per_sqm(offer.title, int(offer.price))
-                embed.add_field(name="Cena/m²", value=(str(price_per_sqm) + " Kč/m²" if price_per_sqm is not None else "Nedostupné"))
+                price_per_sqm = get_price_per_sqm(offer.title, sanitize_price(offer.price))
+                embed.add_field(name="Cena/m²", value=(str(price_per_sqm) + " Kč" if price_per_sqm is not None else "Nedostupné"))
                 for label, distance_meters in landmark_distances.items():
                     embed.add_field(
                         name=label,
@@ -156,6 +175,7 @@ async def process_latest_offers():
         process_latest_offers.change_interval(minutes=interval_time)
 
     await retry_until_successful_edit(channel, f"Last update <t:{int(time())}:R>")
+    await set_activity(f"Nejbližší aktualizace o {get_current_time() + timedelta(minutes=interval_time):%H:%M}")
 
 
 async def retry_until_successful_send(channel: discord.TextChannel, embeds: list[discord.Embed], delay: float = 5.0):
