@@ -13,6 +13,7 @@ from discord.ext import tasks
 from config import *
 from distance_estimator import DistanceEstimator
 from discord_logger import DiscordLogger
+from image_deduper import ImageDeduper
 from offers_storage import OffersStorage
 from scrapers.rental_offer import RentalOffer
 from scrapers_manager import create_scrapers, fetch_latest_offers
@@ -33,6 +34,7 @@ daytime = get_current_daytime()
 interval_time = config.refresh_interval_daytime_minutes if daytime else config.refresh_interval_nighttime_minutes
 
 scrapers = create_scrapers(config.dispositions)
+image_deduper = ImageDeduper(config.found_offers_file.with_name("found_offer_image_hashes.json"))
 landmark_estimators = {
     "Vzdialenosť k FI MU": DistanceEstimator(origin_lat=49.2098333, origin_lon=16.599),
     "Vzdialenosť k Náměstí svobody": DistanceEstimator(origin_lat=49.1951389, origin_lon=16.6080278),
@@ -116,9 +118,12 @@ async def process_latest_offers():
 
     new_offers: list[RentalOffer] = []
     latest_offers = await asyncio.to_thread(fetch_latest_offers, scrapers)
+    await asyncio.to_thread(image_deduper.cleanup_expired)
     for offer in latest_offers:
         if not storage.contains(offer):
-            new_offers.append(offer)
+            is_unique_image = await asyncio.to_thread(image_deduper.accept_offer, offer.image_url)
+            if is_unique_image:
+                new_offers.append(offer)
 
     first_time = storage.first_time
     storage.save_offers(new_offers)

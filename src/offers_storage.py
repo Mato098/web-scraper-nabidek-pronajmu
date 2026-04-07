@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from scrapers.rental_offer import RentalOffer
 
@@ -6,8 +7,8 @@ from scrapers.rental_offer import RentalOffer
 class OffersStorage:
     """Úložiště dříve nalezených nabídek"""
 
-    def __init__(self, path: str):
-        self.path = path
+    def __init__(self, path: str | Path):
+        self.path = str(path)
         """Cesta k uloženým odkazům"""
 
         self.first_time = False
