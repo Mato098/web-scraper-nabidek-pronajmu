@@ -15,13 +15,22 @@ from PIL import Image
 class _HashRecord:
     hash_value: str
     seen_at: datetime
+    image_url: str | None = None
+    phash_value: str | None = None
 
 
 class ImageDeduper:
-    def __init__(self, path: str | Path, retention: timedelta = timedelta(hours=3), max_distance: int = 8):
+    def __init__(
+        self,
+        path: str | Path,
+        retention: timedelta = timedelta(hours=1),
+        max_distance: float = 1.25,
+        max_phash_distance: int = 4,
+    ):
         self.path = Path(path)
         self.retention = retention
         self.max_distance = max_distance
+        self.max_phash_distance = max_phash_distance
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": "web-scraper-nabidek-pronajmu/1.0 (image deduper)",
@@ -40,21 +49,53 @@ class ImageDeduper:
         self._save_records()
 
     def accept_offer(self, image_url: str) -> bool:
-        image_hash = self._download_and_hash(image_url)
-        if image_hash is None:
+        hashes = self._download_and_hashes(image_url)
+        if hashes is None:
             return True
+
+        image_hash, image_phash = hashes
 
         for record in self._records:
             existing_hash = imagehash.hex_to_multihash(record.hash_value)
-            if image_hash - existing_hash <= self.max_distance:
-                logging.info("Duplicate image detected (distance %d <= %d) for URL: %s", image_hash - existing_hash, self.max_distance, image_url)
+            crop_distance = image_hash - existing_hash
+
+            if crop_distance > self.max_distance:
+                continue
+
+            if record.phash_value:
+                existing_phash = imagehash.hex_to_hash(record.phash_value)
+                phash_distance = image_phash - existing_phash
+                if phash_distance > self.max_phash_distance:
+                    continue
+
+                logging.info(
+                    f"Duplicate image detected, crop distance {crop_distance} <= {self.max_distance}, "
+                    f"phash distance {phash_distance} <= {self.max_phash_distance}:\n"
+                    f"NEW URL: {image_url}\n"
+                    f"OLD URL: {record.image_url or '<unknown>'}"
+                )
                 return False
 
-        self._records.append(_HashRecord(hash_value=str(image_hash), seen_at=datetime.now(timezone.utc)))
+            if crop_distance == 0:
+                logging.info(
+                    f"Duplicate image detected (legacy record), crop distance {crop_distance} == 0:\n"
+                    f"NEW URL: {image_url}\n"
+                    f"OLD URL: {record.image_url or '<unknown>'}"
+                )
+                return False
+
+        self._records.append(
+            _HashRecord(
+                hash_value=str(image_hash),
+                seen_at=datetime.now(timezone.utc),
+                image_url=image_url,
+                phash_value=str(image_phash),
+            )
+        )
         self._save_records()
         return True
 
-    def _download_and_hash(self, image_url: str) -> imagehash.ImageHash | None:
+    def _download_and_hashes(self, image_url: str) -> tuple[imagehash.ImageMultiHash, imagehash.ImageHash] | None:
         if not image_url:
             return None
 
@@ -63,7 +104,8 @@ class ImageDeduper:
             response.raise_for_status()
 
             with Image.open(BytesIO(response.content)) as image:
-                return imagehash.crop_resistant_hash(image.convert("RGB"))
+                rgb_image = image.convert("RGB")
+                return imagehash.crop_resistant_hash(rgb_image), imagehash.phash(rgb_image)
         except Exception:
             logging.debug("Image hashing failed for %s", image_url, exc_info=True)
             return None
@@ -85,6 +127,8 @@ class ImageDeduper:
                     _HashRecord(
                         hash_value=item["hash"],
                         seen_at=datetime.fromisoformat(item["seen_at"]),
+                        image_url=item.get("image_url"),
+                        phash_value=item.get("phash"),
                     )
                 )
             except Exception:
@@ -98,6 +142,8 @@ class ImageDeduper:
             {
                 "hash": record.hash_value,
                 "seen_at": record.seen_at.isoformat(),
+                "image_url": record.image_url,
+                "phash": record.phash_value,
             }
             for record in self._records
         ]

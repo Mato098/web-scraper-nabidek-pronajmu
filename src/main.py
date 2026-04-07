@@ -74,10 +74,8 @@ def format_distance(distance_meters: int) -> str:
     return f"{distance_meters / 1000:.1f} km"
 
 def get_price_per_sqm(title: str, price: int) -> int | None:
-    logging.info(title)
-    title = title.replace("\xa0", " ")  # nezlomitelny mezernik
+    title = title.replace("\xa0", " ").replace(",", "")  # nezlomitelny mezernik
     split = title.split(" ")
-    logging.info(split)
     if "m²" in split:
         size = split[split.index("m²") - 1]
         if size.isdecimal():
