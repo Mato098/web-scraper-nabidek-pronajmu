@@ -129,40 +129,31 @@ async def process_latest_offers():
     logging.info("Offers fetched (new: {})".format(len(new_offers)))
 
     if not first_time:
-        def chunk_offers(offers, size):
-            for i in range(0, len(offers), size):
-                yield offers[i:i + size]
+        for offer in new_offers:
+            landmark_distances = await estimate_landmark_distances(offer)
 
-        for offer_batch in chunk_offers(new_offers, config.embed_batch_size):
-            embeds = []
-
-            for offer in offer_batch:
-                landmark_distances = await estimate_landmark_distances(offer)
-
-                embed = discord.Embed(
-                    title=offer.title,
-                    url=offer.link,
-                    description=offer.location,
-                    timestamp=datetime.now(timezone.utc),
-                    color=offer.scraper.color
+            embed = discord.Embed(
+                title=offer.title,
+                url=offer.link,
+                description=offer.location,
+                timestamp=datetime.now(timezone.utc),
+                color=offer.scraper.color
+            )
+            embed.add_field(name="Cena", value=str(offer.price) + " Kč")
+            price_per_sqm = get_price_per_sqm(offer.title, sanitize_price(offer.price))
+            embed.add_field(name="Cena/m²", value=(str(price_per_sqm) + " Kč" if price_per_sqm is not None else "Nedostupné"))
+            for label, distance_meters in landmark_distances.items():
+                embed.add_field(
+                    name=label,
+                    value=(format_distance(distance_meters) if distance_meters is not None else "Nedostupné")
                 )
-                embed.add_field(name="Cena", value=str(offer.price) + " Kč")
-                price_per_sqm = get_price_per_sqm(offer.title, sanitize_price(offer.price))
-                embed.add_field(name="Cena/m²", value=(str(price_per_sqm) + " Kč" if price_per_sqm is not None else "Nedostupné"))
-                for label, distance_meters in landmark_distances.items():
-                    embed.add_field(
-                        name=label,
-                        value=(format_distance(distance_meters) if distance_meters is not None else "Nedostupné")
-                    )
-                bad_streets_for_offer = get_bad_streets(offer)
-                if bad_streets_for_offer:
-                    embed.add_field(name="⚠️ Zlá ulica", value=", ".join(bad_streets_for_offer), inline=False)
-                embed.set_author(name=offer.scraper.name, icon_url=offer.scraper.logo_url)
-                embed.set_image(url=offer.image_url)
+            bad_streets_for_offer = get_bad_streets(offer)
+            if bad_streets_for_offer:
+                embed.add_field(name="⚠️ Zlá ulica", value=", ".join(bad_streets_for_offer), inline=False)
+            embed.set_author(name=offer.scraper.name, icon_url=offer.scraper.logo_url)
+            embed.set_image(url=offer.image_url)
 
-                embeds.append(embed)
-
-            await retry_until_successful_send(channel, embeds)
+            await retry_until_successful_send(channel, embed)
             await asyncio.sleep(1.5)
     else:
         logging.info("No previous offers, first fetch is running silently")
@@ -181,19 +172,19 @@ async def process_latest_offers():
     await set_activity(f"Nejbližší aktualizace o {get_current_time() + timedelta(minutes=interval_time):%H:%M}")
 
 
-async def retry_until_successful_send(channel: discord.TextChannel, embeds: list[discord.Embed], delay: float = 5.0):
-    """Retry sending a message with embeds until it succeeds."""
+async def retry_until_successful_send(channel: discord.TextChannel, embed: discord.Embed, delay: float = 5.0):
+    """Retry sending a message with one embed until it succeeds."""
     while True:
         try:
-            await channel.send(embeds=embeds)
-            logging.info("Embeds successfully sent.")
+            await channel.send(embed=embed)
+            logging.info("Embed successfully sent.")
             return
         except discord.errors.DiscordServerError as e:
-            logging.warning(f"Discord server error while sending embeds: {e}. Retrying in {delay:.1f}s.")
+            logging.warning(f"Discord server error while sending embed: {e}. Retrying in {delay:.1f}s.")
         except discord.errors.HTTPException as e:
-            logging.warning(f"HTTPException while sending embeds: {e}. Retrying in {delay:.1f}s.")
+            logging.warning(f"HTTPException while sending embed: {e}. Retrying in {delay:.1f}s.")
         except Exception as e:
-            logging.exception(f"Unexpected error while sending embeds: {e}. Retrying in {delay:.1f}s.")
+            logging.exception(f"Unexpected error while sending embed: {e}. Retrying in {delay:.1f}s.")
             raise e
         await asyncio.sleep(delay)
 
