@@ -110,6 +110,36 @@ async def on_ready():
 
     process_latest_offers.start()
 
+
+@client.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.channel_id != config.discord.offers_channel:
+        return
+
+    if client.user is not None and payload.user_id == client.user.id:
+        return
+
+    source_channel = client.get_channel(payload.channel_id)
+    if source_channel is None:
+        source_channel = await client.fetch_channel(payload.channel_id)
+
+    target_channel = client.get_channel(config.discord.repost_channel)
+    if target_channel is None:
+        target_channel = await client.fetch_channel(config.discord.repost_channel)
+
+    source_message = await source_channel.fetch_message(payload.message_id)
+    if not source_message.embeds:
+        logging.info(f"Reaction repost skipped because message {payload.message_id} has no embeds.")
+        return
+
+    embed = source_message.embeds[0].copy()
+    emoji_prefix = str(payload.emoji)
+    embed.title = f"{emoji_prefix} {embed.title}"
+
+    await retry_until_successful_send(target_channel, embed)
+
+    logging.info(f"Offer reposted from message_id={payload.message_id} to channel_id={target_channel.id} with emoji={emoji_prefix}")
+
 @tasks.loop(minutes=interval_time)
 async def process_latest_offers():
     logging.info("Fetching offers")

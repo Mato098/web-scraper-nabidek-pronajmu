@@ -47,6 +47,7 @@ class Config:
         token = environ.var()
         offers_channel = environ.var(converter=int)
         dev_channel = environ.var(converter=int)
+        repost_channel = environ.var(converter=int)
 
     discord: Discord = environ.group(Discord)
 
