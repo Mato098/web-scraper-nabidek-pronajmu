@@ -4,3 +4,5 @@ found_offers.txt
 .env.local
 .env
 .env.docker
+*.key
+*.bat

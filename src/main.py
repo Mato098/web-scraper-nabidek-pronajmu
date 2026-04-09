@@ -5,9 +5,11 @@ from datetime import datetime, timedelta, timezone
 from time import time
 from pathlib import Path
 import unicodedata
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import discord
+import requests
 from discord.ext import tasks
 
 from config import *
@@ -66,6 +68,23 @@ def sanitize_price(price: int | str) -> int:
 def get_bad_streets(offer: RentalOffer) -> list[str]:
     normalized_location = normalize_text(offer.location)
     return [street for street in bad_streets if normalize_text(street) in normalized_location]
+
+def is_valid_image_resource(url: str, timeout: int = 8) -> bool:
+    if not url:
+        return False
+
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+
+    try:
+        response = requests.get(url.strip(), timeout=timeout, stream=True)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").lower()
+        return content_type.startswith("image/")
+    except Exception:
+        logging.debug("Image URL validation failed for %s", url, exc_info=True)
+        return False
 
 
 def format_distance(distance_meters: int) -> str:
@@ -181,7 +200,12 @@ async def process_latest_offers():
             if bad_streets_for_offer:
                 embed.add_field(name="⚠️ Zlá ulica", value=", ".join(bad_streets_for_offer), inline=False)
             embed.set_author(name=offer.scraper.name, icon_url=offer.scraper.logo_url)
-            embed.set_image(url=offer.image_url)
+
+            is_usable_image = await asyncio.to_thread(is_valid_image_resource, offer.image_url)
+            if is_usable_image:
+                embed.set_image(url=offer.image_url)
+            elif offer.image_url:
+                logging.warning("Skipping invalid embed image URL for offer link=%s, scraper=%s, image_url=%s", offer.link, offer.scraper.name, offer.image_url)
 
             await retry_until_successful_send(channel, embed)
             await asyncio.sleep(1.5)
@@ -201,23 +225,83 @@ async def process_latest_offers():
     await retry_until_successful_edit(channel, f"Last update <t:{int(time())}:R>")
     await set_activity(f"Nejbližší aktualizace o {get_current_time() + timedelta(minutes=interval_time):%H:%M}")
 
+async def send_distress_message(dc: discord.Client, message: str):
+    """Send a distress message to the dev channel."""
+    try:
+        dev_channel = dc.get_channel(config.discord.dev_channel)
+        if dev_channel is None:
+            dev_channel = await dc.fetch_channel(config.discord.dev_channel)
+        await dev_channel.send(f"🚨 {message}")
+        logging.info("Distress message sent to dev channel.")
+    except Exception as e:
+        logging.exception(f"Failed to send distress message: {e}")
+
+
+async def send_distress_payload(dc: discord.Client, title: str, payload: dict):
+    """Send potentially large diagnostic payload to the dev channel in chunks."""
+    try:
+        dev_channel = dc.get_channel(config.discord.dev_channel)
+        if dev_channel is None:
+            dev_channel = await dc.fetch_channel(config.discord.dev_channel)
+
+        serialized_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+        header = f"🚨 {title}"
+        max_chunk_size = 1800  # keep room for code fences and Discord limits
+
+        if len(serialized_payload) <= max_chunk_size:
+            await dev_channel.send(f"{header}\n```json\n{serialized_payload}\n```")
+            return
+
+        await dev_channel.send(f"{header}\nPayload too large, sending in parts.")
+        chunk_index = 1
+        for start in range(0, len(serialized_payload), max_chunk_size):
+            part = serialized_payload[start:start + max_chunk_size]
+            await dev_channel.send(f"Part {chunk_index}\n```json\n{part}\n```")
+            chunk_index += 1
+    except Exception as e:
+        logging.exception(f"Failed to send distress payload: {e}")
+
 
 async def retry_until_successful_send(channel: discord.TextChannel, embed: discord.Embed, delay: float = 5.0):
     """Retry sending a message with one embed until it succeeds."""
+    retry_count = 0
+    last_error: Exception | None = None
     while True:
         try:
             await channel.send(embed=embed)
             logging.info("Embed successfully sent.")
             return
         except discord.errors.DiscordServerError as e:
+            last_error = e
             logging.warning(f"Discord server error while sending embed: {e}. Retrying in {delay:.1f}s.")
         except discord.errors.HTTPException as e:
+            last_error = e
+            embed_payload = embed.to_dict()
+            logging.warning(f"Embed content: {embed_payload}")
+            logging.warning(f"Response status: {e.status}, response text: {e.text}")
+
+            if 400 <= e.status < 500:
+                diagnostics = {
+                    "status": e.status,
+                    "error": str(e),
+                    "response_text": e.text,
+                    "channel_id": channel.id,
+                    "embed": embed_payload,
+                }
+                await send_distress_payload(client, "4xx while sending embed", diagnostics)
+                logging.error("HTTP 4xx while sending embed. Not retrying because this is a permanent payload/client error.")
+                return
+
             logging.warning(f"HTTPException while sending embed: {e}. Retrying in {delay:.1f}s.")
         except Exception as e:
+            last_error = e
             logging.exception(f"Unexpected error while sending embed: {e}. Retrying in {delay:.1f}s.")
             raise e
+        finally:
+            retry_count += 1
+            if retry_count == 5:
+                await send_distress_message(client, f"Failed to send embed after {retry_count} attempts. Last error: {last_error}")
         await asyncio.sleep(delay)
-
 
 async def retry_until_successful_edit(channel: discord.TextChannel, topic: str, delay: float = 5.0):
     """Retry editing a channel topic until it succeeds."""
@@ -230,6 +314,7 @@ async def retry_until_successful_edit(channel: discord.TextChannel, topic: str, 
             logging.warning(f"Discord server error while editing topic: {e}. Retrying in {delay:.1f}s.")
         except discord.errors.HTTPException as e:
             logging.warning(f"HTTPException while editing topic: {e}. Retrying in {delay:.1f}s.")
+            logging.warning(f"Response status: {e.status}, response text: {e.text}")
         except Exception as e:
             logging.exception(f"Unexpected error while editing channel topic: {e}. Retrying in {delay:.1f}s.")
             raise e
