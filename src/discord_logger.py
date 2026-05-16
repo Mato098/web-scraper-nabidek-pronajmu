@@ -8,6 +8,9 @@ class DiscordLogger(logging.Handler):
         self.channel = channel
 
     def emit(self, record: logging.LogRecord):
-        message = "**{}**\n```\n{}\n```".format(record.levelname, record.getMessage())
+        msg_text = record.getMessage()
+        if len(msg_text) > 3900:
+            msg_text = msg_text[:3900] + "\n...[truncated]"
+        message = "**{}**\n```\n{}\n```".format(record.levelname, msg_text)
 
         self.client.loop.create_task(self.channel.send(message))

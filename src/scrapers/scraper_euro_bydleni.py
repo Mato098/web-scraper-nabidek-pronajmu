@@ -73,6 +73,10 @@ class ScraperEuroBydleni(ScraperBase):
         items: list[RentalOffer] = []
 
         offers = soup.find(id="properties-box")
+        if offers is None:
+            logging.warning("EuroBydlení: 'properties-box' not found in response.")
+            return items
+
         for item in offers.find_all("li", {"class": "list-items__item"}):
 
             image_container = item.find("ul", {"class": "list-items__item__image__wrap"})
