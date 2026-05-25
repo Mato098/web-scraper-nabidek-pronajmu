@@ -122,11 +122,18 @@ class ScraperSreality(ScraperBase):
         return requests.get(url, headers=self.headers)
 
     def get_latest_offers(self) -> list[RentalOffer]:
-        response = self.build_response().json()
+        response = self.build_response()
+        response.raise_for_status()
+        
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError:
+            logging.error("Sreality request returned invalid JSON:\n%s", response.text)
+            return []
 
         items: list[RentalOffer] = []
 
-        for item in response["_embedded"]["estates"]:
+        for item in data.get("_embedded", {}).get("estates", []):
             # Ignorovat "tip" nabídky, které úplně neodpovídají filtrům a mění se s každým vyhledáváním
             if item["region_tip"] > 0:
                 continue
