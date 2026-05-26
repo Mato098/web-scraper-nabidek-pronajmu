@@ -168,6 +168,9 @@ class ScraperSreality(ScraperBase):
                 image_url = images[0].get("url", "")
                 if image_url and image_url.startswith("//"):
                     image_url = "https:" + image_url
+                if image_url:
+                    # Sreality's image CDN requires valid resize/format parameters, otherwise it returns 401 Unauthorized or 400 Bad Request
+                    image_url += "?fl=res,1200,1200,1|shr,,20|jpg,80"
 
             items.append(RentalOffer(
                 scraper = self,
