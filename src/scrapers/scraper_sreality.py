@@ -98,53 +98,84 @@ class ScraperSreality(ScraperBase):
         }
 
 
-    def _create_link_to_offer(self, offer) -> str:
-        locality = offer["seo"]["locality"]
-        locality = locality.strip('-')
-        while '--' in locality:
-            locality = locality.replace('--', '-')
-        
-        return urljoin(self.base_url, "/detail" +
-            "/" + self._category_type_to_url[offer["seo"]["category_type_cb"]] +
-            "/" + self._category_main_to_url[offer["seo"]["category_main_cb"]] +
-            "/" + self._category_sub_to_url[offer["seo"]["category_sub_cb"]] +
-            "/" + locality +
-            "/" + str(offer["hash_id"]))
-
-    def build_response(self) -> requests.Response:
-        url = self.base_url + "/api/cs/v2/estates?category_main_cb=1&category_sub_cb="
-        url += "|".join(self.get_dispositions_data())
-        url += "&category_type_cb=2&locality_district_id=72&locality_region_id=14&per_page=20"
-        url += "&tms=" + str(int(time()))
-
+    def get_latest_offers(self) -> list[RentalOffer]:
+        url = self.base_url + "/hledani/pronajem/byty?region=okres-brno-mesto"
         logging.debug("Sreality request: %s", url)
 
-        return requests.get(url, headers=self.headers)
-
-    def get_latest_offers(self) -> list[RentalOffer]:
-        response = self.build_response()
+        # Hitting the HTML page directly as the REST API is deprecated, 
+        # extracting initial Next.js state
+        response = requests.get(url, headers=self.headers)
         response.raise_for_status()
+
+        import re
+        import json
         
+        match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', response.text)
+        if not match:
+            logging.error("Sreality request returned no __NEXT_DATA__")
+            return []
+            
         try:
-            data = response.json()
-        except requests.exceptions.JSONDecodeError:
-            logging.error("Sreality request returned invalid JSON:\n%s", response.text)
+            data = json.loads(match.group(1))
+            queries = data['props']['pageProps']['dehydratedState']['queries']
+        except (KeyError, json.JSONDecodeError):
+            logging.error("Sreality request returned invalid __NEXT_DATA__ JSON structure")
             return []
 
-        items: list[RentalOffer] = []
+        results = []
+        for q in queries:
+            if q['queryKey'][0] == 'estatesSearch':
+                d = q.get('state', {}).get('data', {})
+                results = d.get('results', [])
+                break
 
-        for item in data.get("_embedded", {}).get("estates", []):
-            # Ignorovat "tip" nabídky, které úplně neodpovídají filtrům a mění se s každým vyhledáváním
-            if item["region_tip"] > 0:
+        items: list[RentalOffer] = []
+        allowed_dispositions = self.get_dispositions_data()
+
+        for item in results:
+            # Check dispositions manually since we fetch all dispositions in this query
+            sub_cb_val = str(item.get("categorySubCb", {}).get("value", ""))
+            if sub_cb_val not in allowed_dispositions:
                 continue
+
+            # Skip tips
+            if item.get("regionTip", 0) > 0 or item.get("brokerTip", 0) > 0 or item.get("projectTip", 0) > 0:
+                continue
+                
+            # Build locality string for URL
+            loc = item.get("locality", {})
+            parts = []
+            for p in ["citySeoName", "cityPartSeoName", "streetSeoName"]:
+                if loc.get(p):
+                    parts.append(loc[p])
+            locality_url = "-".join(parts) if parts else "lokalita"
+            
+            link = f"{self.base_url}/detail/pronajem/byt/{self._category_sub_to_url.get(int(sub_cb_val), 'jiny')}/{locality_url}/{item['id']}"
+
+            # Location string for display
+            loc_str = []
+            if loc.get('street'):
+                loc_str.append(loc['street'])
+            elif loc.get('cityPart'):
+                loc_str.append(loc['cityPart'])
+            if loc.get('city'):
+                loc_str.append(loc['city'])
+            location_str = ", ".join(loc_str)
+
+            image_url = ""
+            images = item.get("images", [])
+            if images:
+                image_url = images[0].get("url", "")
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
 
             items.append(RentalOffer(
                 scraper = self,
-                link = self._create_link_to_offer(item),
-                title = item["name"],
-                location = item["locality"],
-                price = item["price_czk"]["value_raw"],
-                image_url = item["_links"]["image_middle2"][0]["href"]
+                link = link,
+                title = item.get("name", "Neznámý název"),
+                location = location_str,
+                price = item.get("priceCzk", 0),
+                image_url = image_url
             ))
 
         return items
